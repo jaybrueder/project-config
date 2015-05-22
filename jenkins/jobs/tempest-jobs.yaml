@@ -1,0 +1,8 @@
+- job-group:
+    name: 'lib-forward-testing-{name}'
+    jobs:
+      - '{pipeline}-tempest-dsvm-neutron-src-{name}{branch-designator}':
+          pipeline: gate
+          node: 'devstack-precise || devstack-trusty'
+          branch-designator: ''
+          branch-override: default

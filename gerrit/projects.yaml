@@ -1,2 +1,4 @@
 - project: openstack-dev/sandbox
   description: Sandbox for first time contributors
+- project: openstack/nova
+  description: OpenStack Compute (Nova)

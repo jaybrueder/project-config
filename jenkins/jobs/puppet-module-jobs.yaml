@@ -1,0 +1,162 @@
+- job-template:
+    name: 'gate-{name}-puppet-unit-{puppet_version}'
+    node: '{node}'
+
+    builders:
+      - uninstall-puppet
+      - revoke-sudo
+      - gerrit-git-prep
+      - shell: |
+          export PUPPET_GEM_VERSION='~> {puppet_version}.0'
+          mkdir .bundled_gems
+          export GEM_HOME=`pwd`/.bundled_gems
+          bundle install
+          bundle exec rake spec SPEC_OPTS='--format documentation'
+
+    wrappers:
+      - build-timeout:
+          timeout: 60
+      - timestamps
+
+    publishers:
+      - console-log
+
+
+- job-template:
+    name: 'gate-{name}-puppet-beaker-rspec-dsvm-{ostype}'
+    node: 'devstack-{ostype}'
+
+    builders:
+      - uninstall-puppet
+      - shell: |
+          if [ -f /usr/bin/yum ]; then
+              sudo yum -y install libxml2-devel libxslt-devel ruby-devel
+              sudo yum -y groupinstall "Development Tools"
+          elif [ -f /usr/bin/apt-get ]; then
+              sudo apt-get update
+              sudo apt-get install -y libxml2-dev libxslt-dev
+          fi
+      - gerrit-git-prep
+      - shell: |
+          echo "" | sudo tee -a /etc/ssh/sshd_config
+          echo "Match address 127.0.0.1" | sudo tee -a /etc/ssh/sshd_config
+          echo "    PermitRootLogin without-password" | sudo tee -a /etc/ssh/sshd_config
+          echo "" | sudo tee -a /etc/ssh/sshd_config
+          echo "Match address ::1" | sudo tee -a /etc/ssh/sshd_config
+          echo "    PermitRootLogin without-password" | sudo tee -a /etc/ssh/sshd_config
+          mkdir -p .ssh
+          ssh-keygen -f ~/.ssh/id_rsa -b 2048 -C "beaker key" -P ""
+          sudo mkdir -p /root/.ssh
+          cat ~/.ssh/id_rsa.pub | sudo tee -a /root/.ssh/authorized_keys
+          if [ -f /usr/bin/yum ]; then
+              sudo systemctl restart sshd
+          elif [ -f /usr/bin/apt-get ]; then
+              sudo service ssh restart
+          fi
+          sudo gem install bundler --no-rdoc --no-ri --verbose
+      - revoke-sudo
+      - shell: |
+          mkdir .bundled_gems
+          export GEM_HOME=`pwd`/.bundled_gems
+          bundle install
+          export BEAKER_set=nodepool-{ostype}
+          bundle exec rspec spec/acceptance
+
+    wrappers:
+      - build-timeout:
+          timeout: 60
+      - timestamps
+
+    publishers:
+      - console-log
+
+- job-template:
+    name: '{name}-forge-upload'
+    node: pypi
+
+    builders:
+      - revoke-sudo
+      - gerrit-git-prep
+      - shell: |
+          #!/bin/bash
+          cat > Rakefile << EOF
+          require 'puppet_blacksmith/rake_tasks'
+          EOF
+          TAG=${{ZUUL_REF:10}}
+          sed -i -e 's/  "version":.*/  "version": "'$TAG'",/' metadata.json
+          mkdir .bundled_gems
+          export GEM_HOME=`pwd`/.bundled_gems
+          gem install --no-ri --no-rdoc  puppetlabs_spec_helper puppet-blacksmith
+          rake module:push
+
+    publishers:
+      - console-log
+
+
+- job-template:
+    name: 'gate-{name}-puppet-lint'
+    node: '{node}'
+
+    builders:
+      - revoke-sudo
+      - gerrit-git-prep
+      - puppet-lint
+
+    publishers:
+      - console-log
+
+- job-template:
+    name: 'gate-{name}-puppet-syntax'
+    node: '{node}'
+
+    builders:
+      - revoke-sudo
+      - gerrit-git-prep
+      - puppet-syntax
+
+    publishers:
+      - console-log
+
+- job-template:
+    name: 'gate-{name}-puppet-syntax-future'
+    node: '{node}'
+
+    builders:
+      - uninstall-puppet
+      - revoke-sudo
+      - gerrit-git-prep
+      - shell: |
+          export PUPPET_GEM_VERSION='~> 3.7.0'
+          mkdir .bundled_gems
+          export GEM_HOME=`pwd`/.bundled_gems
+          bundle install
+          export FUTURE_PARSER=yes
+          bundle exec rake syntax
+
+    publishers:
+      - console-log
+
+- job-group:
+    name: 'puppet-check-jobs'
+    jobs:
+      - 'gate-{name}-puppet-lint'
+      - 'gate-{name}-puppet-syntax'
+
+- job-group:
+    name: 'puppet-module-unit'
+    puppet_version:
+      - 3.3
+      - 3.4
+      - 3.6
+      - 3.7
+      - 4.0
+    jobs:
+      - 'gate-{name}-puppet-unit-{puppet_version}'
+
+- job-group:
+    name: 'puppet-beaker-jobs'
+    ostype:
+      - trusty
+      - centos7
+    jobs:
+      - 'gate-{name}-puppet-beaker-rspec-dsvm-{ostype}'

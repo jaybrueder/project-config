@@ -1,28 +1,138 @@
 pipelines:
   - name: check
     description: Newly uploaded patchsets enter this pipeline to receive an initial +/-1 Verified vote from Jenkins.
-    failure-message: Build failed.  For information on how to proceed, see https://wiki.openstack.org/wiki/GerritJenkinsGit#Test_Failures
+    success-message: Build succeeded (check pipeline).
+    failure-message: Build failed (check pipeline).  For information on how to proceed, see http://docs.openstack.org/infra/manual/developers.html#automated-testing
     manager: IndependentPipelineManager
+    source: gerrit
+    precedence: normal
+    require:
+      open: True
+      current-patchset: True
     trigger:
       gerrit:
         - event: patchset-created
         - event: change-restored
         - event: comment-added
-
-          comment: (?i)^(Patch Set [0-9]+:)?( [\w\\+-]*)*(\n\n)?\s*recheck(( (?:bug|lp)[\s#:]*(\d+))|( no bug))\s*$
-        # Change "myvendor" below to your vendor's name to add a custom
-        # recheck trigger that runs the check pipeline jobs when someone
-        # adds a comment to a review that says "recheck $VENDOR".
+          comment: (?i)^(Patch Set [0-9]+:)?( [\w\\+-]*)*(\n\n)?\s*(recheck|reverify)
         - event: comment-added
-          comment: (?i)^(Patch Set [0-9]+:)?( [\w\\+-]*)*(\n\n)?\s*recheck(( (?:bug|lp)[\s#:]*(\d+))|( Infralovers))\s*$
+          require-approval:
+            - verified: [-1, -2]
+              username: jenkins
+          approval:
+            - workflow: 1
     success:
       gerrit:
         verified: 1
     failure:
       gerrit:
-        verified: -1
+        verified: -
+
+  - name: gate
+    description: Changes that have been approved by core developers are enqueued in order in this pipeline, and if they pass tests in Jenkins, will be merged.
+    success-message: Build succeeded (gate pipeline).
+    failure-message: Build failed (gate pipeline).  For information on how to proceed, see http://docs.openstack.org/infra/manual/developers.html#automated-testing
+    manager: DependentPipelineManager
+    source: gerrit
+    precedence: high
+    require:
+      open: True
+      current-patchset: True
+      approval:
+        - verified: [1, 2]
+          username: jenkins
+        - workflow: 1
+    trigger:
+      gerrit:
+        - event: comment-added
+          approval:
+            - workflow: 1
+        - event: comment-added
+          approval:
+            - verified: 1
+          username: jenkins
+    start:
+      gerrit:
+        verified: 0
+    success:
+      gerrit:
+        verified: 2
+        submit: true
+    failure:
+      gerrit:
+        verified: -2
+    window-floor: 20
+    window-increase-factor: 2
+
+  - name: post
+    description: This pipeline runs jobs that operate after each change is merged.
+    manager: IndependentPipelineManager
+    source: gerrit
+    precedence: low
+    trigger:
+      gerrit:
+        - event: ref-updated
+          ref: ^(?!refs/).*$
+
+  - name: experimental
+    description: On-demand pipeline for requesting a run against a set of jobs that are not yet gating. Leave review comment of "check experimental" to run jobs in this pipeline.
+    success-message: Build succeeded (experimental pipeline).
+    failure-message: Build failed (experimental pipeline).
+    manager: IndependentPipelineManager
+    source: gerrit
+    precedence: normal
+    trigger:
+      gerrit:
+        - event: comment-added
+          comment: (?i)^(Patch Set [0-9]+:)?( [\w\\+-]*)*(\n\n)?\s*check experimental\s*$
+    success:
+      gerrit: {}
+    failure:
+      gerrit: {}
 
 projects:
   - name: openstack-dev/sandbox
     check:
       - noop-check-communication
+
+  - name: openstack/nova
+    template:
+      - name: merge-check
+      - name: python26-jobs
+      - name: python-jobs
+      - name: openstack-server-publish-jobs
+      - name: openstack-server-release-jobs
+      - name: periodic-icehouse
+      - name: periodic-juno
+      - name: check-requirements
+      - name: integrated-gate
+      - name: grenade
+      - name: large-ops
+      - name: translation-jobs
+      - name: experimental-tripleo-jobs
+    check:
+      - check-devstack-dsvm-cells
+      - gate-nova-tox-functional
+      - check-grenade-dsvm-partial-ncpu
+      - check-grenade-dsvm-ironic-sideways
+      - check-tempest-dsvm-ironic-pxe_ssh
+      - check-tempest-dsvm-nova-v21-full
+      - check-tempest-dsvm-nova-v21-neutron-full
+      - check-tempest-dsvm-cells
+      - check-tempest-dsvm-full-ceph
+      - check-tempest-dsvm-multinode-full
+    gate:
+      - gate-nova-tox-functional
+      - gate-devstack-dsvm-cells
+      - gate-grenade-dsvm-partial-ncpu
+      - gate-grenade-dsvm-ironic-sideways
+      - gate-tempest-dsvm-nova-v21-full
+      - gate-tempest-dsvm-full-ceph
+    post:
+      - nova-coverage
+    experimental:
+      - gate-grenade-dsvm-forward
+      - gate-nova-pip-missing-reqs
+      - check-tempest-dsvm-neutron-multinode-full
+      - experimental-nova-dsvm-python27
+      - check-tempest-dsvm-f21

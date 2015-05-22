@@ -6,3 +6,20 @@
 
     jobs:
         - noop-check-communication
+
+- project:
+    name: nova
+    node: 'bare-precise || bare-trusty'
+    tarball-site: tarballs.openstack.org
+    doc-publisher-site: docs.openstack.org
+
+    jobs:
+      - python-jobs
+      - python-icehouse-bitrot-jobs
+      - python-juno-bitrot-jobs
+      - openstack-publish-jobs
+      - gate-{name}-pylint
+      - gate-{name}-pip-missing-reqs
+      - 'gate-{name}-tox-{envlist}':
+          envlist: functional
+      - translation-jobs
